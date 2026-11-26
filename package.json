@@ -1,0 +1,28 @@
+{
+  "name": "instant-online-success",
+  "version": "0.20.0",
+  "description": "Instant Online Success website builder (Cloud Run)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test:item20": "node test/item20-stripe-test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Randymanrammer/randymanrandyman6-gmail.com-.git"
+  },
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/Randymanrammer/randymanrandyman6-gmail.com-/issues"
+  },
+  "homepage": "https://github.com/Randymanrammer/randymanrandyman6-gmail.com-#readme",
+  "dependencies": {
+    "@google-cloud/firestore": "^9.4.1",
+    "express": "^5.3.0",
+    "stripe": "^23.2.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  }
+}
