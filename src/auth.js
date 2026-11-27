@@ -59,6 +59,7 @@ async function loadUser(req, _res, next) {
     req.user = { email: p.email, isOwner: p.email === config.ownerEmail };
     const m = await store.where('members', 'email', p.email);
     req.member = m[0] || null;
+    req.user.skin = req.member?.settings?.skin || 'classic';
   }
   next();
 }

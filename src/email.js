@@ -27,6 +27,11 @@ async function sendEmail({ to, subject, html, kind, marketing = false, unsubscri
     await store.add('emails', record);
     return record;
   }
+  if (marketing && await store.get('optouts', Buffer.from(String(to).toLowerCase()).toString('base64url'))) {
+    record.status = 'blocked: opted out';
+    await store.add('emails', record);
+    return record;
+  }
   const key = config.secret('RESEND_API_KEY');
   if (!key) {
     record.status = 'not sent: email not connected';
@@ -34,10 +39,11 @@ async function sendEmail({ to, subject, html, kind, marketing = false, unsubscri
     return record;
   }
   try {
-    const r = await fetch('https://api.resend.com/emails', {
+    const r = await fetch((process.env.RESEND_BASE_URL || 'https://api.resend.com') + '/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: config.emailFrom, to: [to], subject, html: layout(html, { marketing, unsubscribeUrl }) }),
+      body: JSON.stringify({ from: config.emailFrom, to: [to], subject, html: layout(html, { marketing, unsubscribeUrl }),
+        ...(marketing && unsubscribeUrl ? { headers: { 'List-Unsubscribe': `<${unsubscribeUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } } : {}) }),
     });
     record.status = r.ok ? 'sent' : `failed: HTTP ${r.status}`;
   } catch (e) {

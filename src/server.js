@@ -19,23 +19,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------- Member sites on [site].DOMAIN ----------
-app.use(async (req, res, next) => {
-  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(':')[0].toLowerCase();
-  const suffix = '.' + config.domain;
-  if (!host.endsWith(suffix)) return next();
-  const sub = host.slice(0, -suffix.length);
-  if (!sub || sub === 'www' || sub === 'app') return next();
-  try { await serveSite(sub, res); } catch (e) { next(e); }
-});
-
-async function serveSite(slug, res) {
-  const site = await sites.siteBySlug(slug);
-  const st = await sites.liveState(site);
-  res.setHeader('Cache-Control', st.live ? 'public, max-age=60' : 'no-store');
-  if (!st.live) return res.status(st.reason === 'missing' ? 404 : 503).send(sites.offlinePage(st.reason));
-  res.send(sites.renderSite(site));
-}
+app.use(require('./security').blockAttacks);
+// ---------- Member sites: [site].DOMAIN, custom domains, DOMAIN/s/[site] ----------
+require('./publicSite').mount(app);
 
 // ---------- Stripe webhook: raw body + signature check ----------
 app.post('/webhooks/stripe', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
@@ -63,8 +49,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const actor = (req) => req.user?.email || 'visitor';
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
-app.get('/', (req, res) => res.send(home({ stripeConnected: billing.connected(), user: req.user })));
-app.get('/s/:slug', wrap(async (req, res) => serveSite(String(req.params.slug).toLowerCase(), res)));
+app.get('/', (req, res) => res.send(home({ stripeConnected: billing.connected(), user: req.user, ref: require('./referrals').validCode(req.query.ref) ? String(req.query.ref) : '' })));
 
 // ---------- Signup ----------
 app.post('/checkout', wrap(async (req, res) => {
@@ -74,7 +59,7 @@ app.post('/checkout', wrap(async (req, res) => {
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).send(page('Check email', '<p>That email looks wrong.</p><p><a href="/">Back</a></p>'));
   const existing = email ? await billing.memberByEmail(email) : null;
   if (existing && existing.status !== 'ended') return res.send(page('Already a member', '<p>You already have a membership. <a href="/login">Sign in</a>.</p>'));
-  const session = await billing.createCheckout({ email, member: existing && existing.status === 'ended' ? existing : null });
+  const session = await billing.createCheckout({ email, member: existing && existing.status === 'ended' ? existing : null, ref: req.body.ref });
   res.redirect(303, session.url);
 }));
 
@@ -94,9 +79,10 @@ app.get('/login', (req, res) => res.send(page('Sign in', `
 <h1>Sign in</h1><div class="card"><form method="post" action="/login">
 <label for="e">Email</label><input id="e" name="email" type="email" required autocomplete="email">
 <input type="hidden" name="next" value="${esc(req.query.next || '/dashboard')}">
-<button>Email me a sign-in link</button></form></div>`, { user: req.user })));
+<button>Email me a sign-in link</button></form>
+${require('./firebase').configured() ? `<hr><button class="sec" id="gbtn" type="button">Sign in with Google</button><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script><script src="/login/google.js"></script>` : '<p class="mut small">Sign in with Google: Not connected</p>'}</div>`, { user: req.user })));
 
-app.post('/login', wrap(async (req, res) => {
+app.post('/login', require('./security').rateLimit('login', 5, 10 * 60e3), wrap(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const m = await billing.memberByEmail(email);
   if ((m || email === config.ownerEmail) && config.has('TOKEN_ENCRYPTION_KEY')) {
@@ -139,7 +125,8 @@ app.get('/dashboard', auth.requireLogin, needMember, wrap(async (req, res) => {
   const siteRows = active.map((s) => {
     const url = `/s/${s.slug}`;
     const state = !hosting ? '<span class="pill bad">Offline</span>' : s.ownerPaused ? '<span class="pill warn">Paused</span>' : s.published ? '<span class="pill ok">Live</span>' : '<span class="pill mut">Draft</span>';
-    return `<tr><td><b>${esc(s.details.businessName)}</b><br><a href="${url}">${esc(url)}</a><br><span class="mut">${esc(s.slug)}.${esc(config.domain)} - address setup coming soon</span></td><td>${state}</td>
+    const held = s.governorHold ? '<br><span class="warn">Waiting for review</span>' : '';
+    return `<tr><td><b>${esc(s.details.businessName)}</b><br><a href="${url}/">${esc(url)}</a><br><span class="mut">${esc(s.slug)}.${esc(config.domain)}${process.env.SUBDOMAINS_LIVE === 'yes' ? '' : ' - coming soon'}</span><br>${require('./routes/member').siteLinks(s)}${held}</td><td>${state}</td>
 <td><div class="row">${m.status !== 'ended' ? `<form method="post" action="/sites/${s.id}/${s.published ? 'unpublish' : 'publish'}"><button class="sec">${s.published ? 'Unpublish' : 'Publish'}</button></form>
 <details><summary>Remove</summary><form method="post" action="/sites/${s.id}/remove"><p class="mut">Takes it off your plan. It's kept, not deleted.</p><button class="danger">Yes, remove</button></form></details>` : ''}</div></td></tr>`;
   }).join('');
@@ -152,6 +139,7 @@ ${req.query.welcome ? '<p class="flash">Welcome! Your membership is active.</p>'
 <p><b>${active.length} of ${inc} sites used</b>${active.length > inc ? ` + ${active.length - inc} extra at $25/month each` : ''}</p>
 <div class="meter" role="img" aria-label="${active.length} of ${inc} sites used"><i style="width:${pct}%"></i></div></div>
 
+${await require('./routes/member').dashboardExtras(req)}
 <div class="card"><h2 style="margin-top:0">Your sites</h2>
 ${active.length ? `<div class="scroll"><table>${siteRows}</table></div>` : '<p class="mut">No sites yet.</p>'}
 </div>
@@ -168,6 +156,11 @@ ${canBuild ? `<div class="card" id="new"><h2 style="margin-top:0">Build a site</
 <label>Email</label><input name="email" type="email" maxlength="120">
 <label>Address</label><input name="address" maxlength="200">
 <label>Hours</label><textarea name="hours" rows="2" maxlength="400"></textarea>
+<label>Menu items (optional, one per line: Name - $price)</label><textarea name="menu" rows="3" maxlength="4000" placeholder="Croissant - $3.50"></textarea>
+<label>Common questions (optional, one per line: Question? Answer)</label><textarea name="faqs" rows="3" maxlength="4000" placeholder="Do you deliver? Yes, within 10 miles."></textarea>
+<label class="check"><input type="checkbox" name="takesBookings" value="yes"> <span>I take bookings or appointments (adds a Booking page)</span></label>
+<label for="tpl">Template</label><select id="tpl" name="template" style="width:100%;padding:11px;border-radius:9px;margin:4px 0 12px">${(await require('./templates').allTemplates()).map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select>
+<p class="small"><a href="/templates" target="_blank">See template samples</a></p>
 ${active.length >= inc ? '<p class="price"><b>$25/month for this site.</b> You will confirm on the next screen.</p>' : ''}
 <button>Create site</button></form></div>` : ''}
 
@@ -188,7 +181,7 @@ app.post('/sites', auth.requireLogin, needMember, wrap(async (req, res) => {
       return res.send(page('Confirm extra site', `<h1>Add a 4th+ site?</h1><div class="card"><p class="price"><b>${esc(r.message)}</b></p>
 <form method="post" action="/sites">${hidden}<input type="hidden" name="confirmExtra" value="yes"><div class="row"><button>Confirm: add for $25/month</button><a class="btn sec" href="/dashboard">Not now</a></div></form></div>`, { user: req.user }));
     }
-    res.redirect(303, '/dashboard');
+    res.redirect(303, `/sites/${r.site.id}/builder`);
   } catch (e) {
     res.status(e.status || 500).send(page('Could not create site', `<p class="bad">${esc(e.status ? e.message : 'Something went wrong. Nothing was charged.')}</p><p><a href="/dashboard">Back</a></p>`, { user: req.user }));
     if (!e.status) console.error('createSite', e.message);
@@ -197,7 +190,8 @@ app.post('/sites', auth.requireLogin, needMember, wrap(async (req, res) => {
 
 for (const [path, pub] of [['publish', true], ['unpublish', false]]) {
   app.post(`/sites/:id/${path}`, auth.requireLogin, needMember, wrap(async (req, res) => {
-    await sites.setPublished(req.member, req.params.id, pub, actor(req));
+    const r = await sites.setPublished(req.member, req.params.id, pub, actor(req));
+    if (pub && r && !r.published) return res.redirect(303, `/sites/${req.params.id}/builder`);
     res.redirect(303, '/dashboard');
   }));
 }
@@ -244,52 +238,34 @@ app.post('/billing/refund-request', auth.requireLogin, needMember, wrap(async (r
   res.send(page('Refund requested', '<p>Your refund request was sent for review. You will get an email with the answer.</p><p><a href="/billing">Back to billing</a></p>', { user: req.user }));
 }));
 
-// ---------- Owner: approval queue + Oracle ----------
-app.get('/owner', auth.requireOwner, wrap(async (req, res) => {
-  const approvals = (await store.all('approvals')).sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : -1));
-  const log = await recent(60);
-  res.send(page('Owner', `<h1>Owner console</h1>
-<p class="mut">Stripe: ${billing.connected() ? (billing.isTestMode() ? 'TEST mode' : '<b class="bad">LIVE mode</b>') : 'Not connected'}</p>
-<div class="card"><h2 style="margin-top:0">Approval queue</h2>
-${approvals.length ? `<div class="scroll"><table><tr><th>When</th><th>What</th><th>Who</th><th>Status</th><th></th></tr>${approvals.map((a) => `<tr><td>${esc(a.requestedAt?.slice(0, 16).replace('T', ' '))}</td><td>${esc(a.type)} ${a.amountCents ? billing.money(a.amountCents) : ''}<br><span class="mut">${esc(a.reason || '')}</span></td><td>${esc(a.email || '')}</td><td>${esc(a.status)}</td>
-<td>${a.status === 'pending' ? `<form method="post" action="/owner/approvals/${a.id}"><div class="row"><button name="decision" value="approve">Approve</button><button class="sec" name="decision" value="deny">Deny</button></div></form>` : ''}</td></tr>`).join('')}</table></div>` : '<p class="mut">Nothing waiting.</p>'}</div>
-<div class="card"><h2 style="margin-top:0">Oracle log</h2><div class="scroll"><table>${log.map((l) => `<tr><td>${esc(l.when.slice(0, 19).replace('T', ' '))}</td><td>${esc(l.who)}</td><td>${esc(l.what)}</td></tr>`).join('')}</table></div></div>`, { user: req.user }));
-}));
-
-app.post('/owner/approvals/:id', auth.requireOwner, wrap(async (req, res) => {
-  const a = await store.get('approvals', req.params.id);
-  if (!a || a.status !== 'pending') return res.redirect(303, '/owner');
-  const decision = req.body.decision === 'approve' ? 'approve' : 'deny';
-  if (decision === 'approve' && a.type === 'refund') {
-    try {
-      const r = await billing.executeApprovedRefund(a, req.user.email);
-      await store.update('approvals', a.id, { status: 'approved', decidedAt: new Date().toISOString(), decidedBy: req.user.email, refundId: r.id });
-      await oracle(req.user.email, 'refund.approved', { approval: a.id, refund: r.id, amountCents: a.amountCents });
-      await sendEmail({ to: a.email, kind: 'refund', subject: 'Your refund was approved', html: `<p>Your refund of ${billing.money(a.amountCents)} was approved. It usually shows on your card in 5-10 business days.</p>` });
-    } catch (e) {
-      await oracle(req.user.email, 'refund.failed', { approval: a.id, error: e.message });
-      return res.send(page('Refund failed', `<p class="bad">${esc(e.message)}</p><p><a href="/owner">Back</a></p>`, { user: req.user }));
-    }
-  } else {
-    await store.update('approvals', a.id, { status: 'denied', decidedAt: new Date().toISOString(), decidedBy: req.user.email });
-    await oracle(req.user.email, `${a.type}.denied`, { approval: a.id });
-    if (a.type === 'refund') await sendEmail({ to: a.email, kind: 'refund', subject: 'About your refund request', html: '<p>Your refund request was reviewed and not approved. Reply to this email if you have questions.</p>' });
-  }
-  res.redirect(303, '/owner');
-}));
-
 // ---------- Daily job (Cloud Scheduler, CRON_SECRET header) ----------
-app.post('/cron/daily', wrap(async (req, res) => {
+function cronOk(req) {
   const want = config.secret('CRON_SECRET');
   const got = String(req.headers['x-cron-secret'] || '');
   const crypto = require('crypto');
-  if (!want || got.length !== want.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) return res.status(401).send('no');
-  const out = await require('./jobs').daily();
-  res.json(out);
+  return !!want && got.length === want.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want));
+}
+app.post('/cron/daily', wrap(async (req, res) => {
+  if (!cronOk(req)) return res.status(401).send('no');
+  res.json((await require('./bots').run('daily')).summary);
 }));
+app.post('/cron/bot/:name', wrap(async (req, res) => {
+  if (!cronOk(req)) return res.status(401).send('no');
+  res.json(await require('./bots').run(String(req.params.name)));
+}));
+// IndexNow key file for the platform host (item 77)
+app.get('/:key.txt', wrap(async (req, res, next) => {
+  const k = await require('./bots').indexNowKey();
+  if (!k || req.params.key !== k) return next();
+  res.type('text/plain').send(k);
+}));
+
+require('./routes/builder').mount(app, { needMember });
+for (const r of ['member', 'owner', 'bots', 'legal']) { try { require('./routes/' + r).mount(app, { needMember, wrap }); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND' || !String(e.message).includes('routes/' + r)) throw e; } }
 
 app.use((req, res) => res.status(404).send(page('Not found', '<h1>Page not found</h1><p><a href="/">Home</a></p>', { user: req.user })));
 app.use((err, req, res, _next) => {
+  if (err.status && err.status < 500) return res.status(err.status).send(page(err.status === 404 ? 'Not found' : 'Error', `<p>${esc(err.expose !== false ? err.message : 'Request error')}</p><p><a href="/dashboard">Back</a></p>`, { user: req.user }));
   console.error('error', req.method, req.path, err.type || '', err.message);
   res.status(500).send(page('Error', '<p>Something went wrong. Nothing was charged twice. Please try again.</p>', { user: req.user }));
 });

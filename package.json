@@ -1,11 +1,12 @@
 {
   "name": "instant-online-success",
-  "version": "0.20.0",
+  "version": "1.0.0",
   "description": "Instant Online Success website builder (Cloud Run)",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "test:item20": "node test/item20-stripe-test.js"
+    "test:item20": "node test/item20-stripe-test.js",
+    "test:items21-100": "node test/items21-100-test.js"
   },
   "repository": {
     "type": "git",
