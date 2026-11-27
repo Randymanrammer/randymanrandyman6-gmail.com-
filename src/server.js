@@ -112,12 +112,14 @@ app.post('/login', wrap(async (req, res) => {
   res.send(page('Check your email', `<p>${emailOn ? 'If that email has an account, a sign-in link is on its way.' : 'Email sign-in: Not connected.'}</p>`));
 }));
 
-app.get('/login/verify', (req, res) => {
+app.get('/login/verify', wrap(async (req, res) => {
   const p = auth.verify(String(req.query.token || ''), 'login');
-  if (!p) return res.status(400).send(page('Link expired', '<p>That link expired. <a href="/login">Get a new one</a>.</p>'));
+  // Each link works once: its random code is recorded the first time it's used.
+  const firstUse = p && p.n && await store.claim('used_login_links', p.n, { email: p.email, at: new Date().toISOString() });
+  if (!firstUse) return res.status(400).send(page('Link expired', '<p>That link expired or was already used. <a href="/login">Get a new one</a>.</p>'));
   auth.startSession(res, p.email);
   res.redirect(303, p.email === config.ownerEmail ? '/owner' : '/dashboard');
-});
+}));
 app.post('/logout', (req, res) => { auth.endSession(res); res.redirect(303, '/'); });
 
 // ---------- Dashboard ----------

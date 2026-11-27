@@ -29,8 +29,12 @@ const LOOKUP = {
 };
 
 let _prices = null;
-async function prices() {
-  if (_prices) return _prices;
+function prices() {
+  // Share one lookup between simultaneous first requests so products aren't created twice.
+  if (!_prices) _prices = loadPrices().catch((e) => { _prices = null; throw e; });
+  return _prices;
+}
+async function loadPrices() {
   const s = stripe();
   const found = await s.prices.list({ lookup_keys: Object.values(LOOKUP), active: true, limit: 10 });
   const by = Object.fromEntries(found.data.map((p) => [p.lookup_key, p]));
@@ -42,12 +46,11 @@ async function prices() {
       ...(recurring ? { recurring: { interval: 'month' } } : {}),
     });
   }
-  _prices = {
+  return {
     signup: await ensure(LOOKUP.signup, 'Instant Online Success membership signup', config.plan.signupCents, false),
     plan: await ensure(LOOKUP.plan, 'Instant Online Success plan (up to 3 sites built and hosted)', config.plan.monthlyCents, true),
     extra: await ensure(LOOKUP.extra, 'Extra site (4th and up)', config.plan.extraSiteCents, true),
   };
-  return _prices;
 }
 
 const money = (cents) => '$' + (cents / 100).toFixed(2);
