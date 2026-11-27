@@ -85,6 +85,11 @@ app.get('/welcome', wrap(async (req, res) => {
   const cs = await billing.stripe().checkout.sessions.retrieve(id); // verified server-side with Stripe
   if (cs.status !== 'complete' || !cs.subscription) return res.send(page('Not finished', '<p>Checkout is not complete yet.</p><p><a href="/">Back</a></p>'));
   const m = await billing.syncSubscription(await billing.stripe().subscriptions.retrieve(cs.subscription), 'stripe:checkout-return');
+  const custId = typeof cs.customer === 'string' ? cs.customer : cs.customer?.id;
+  const fresh = Date.now() / 1000 - cs.created < 3600; // old /welcome links can't be reused to sign in
+  if (!m || !fresh || m.stripeCustomerId !== custId || m.email === config.ownerEmail) {
+    return res.send(page('Payment received', `<p>${m ? 'Your payment went through.' : 'Your payment went through, but that email already belongs to another account. We will contact you.'}</p><p><a href="/login">Sign in with an emailed link</a> to reach your dashboard.</p>`));
+  }
   auth.startSession(res, m.email);
   res.redirect(303, '/dashboard?welcome=1');
 }));

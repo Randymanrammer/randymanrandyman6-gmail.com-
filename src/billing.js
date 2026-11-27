@@ -113,7 +113,18 @@ async function syncSubscription(sub, actor = 'stripe') {
   const customer = typeof sub.customer === 'string' ? await stripe().customers.retrieve(sub.customer) : sub.customer;
   const customerId = customer.id;
   let m = await memberByCustomer(customerId);
-  if (!m && customer.email) m = await memberByEmail(customer.email);
+  if (!m && customer.email) {
+    // Stripe Checkout does not prove the buyer owns the email they typed.
+    // Never attach a new Stripe customer to someone else's existing member
+    // record (or to the owner's email) - that would hand over their account.
+    const byEmail = await memberByEmail(customer.email);
+    const email = String(customer.email).toLowerCase();
+    if ((byEmail && byEmail.stripeCustomerId && byEmail.stripeCustomerId !== customerId) || (!byEmail && email === config.ownerEmail)) {
+      await oracle(actor, 'member.email_conflict', { customer: customerId, subscription: sub.id, existingMember: byEmail?.id || null });
+      return null;
+    }
+    m = byEmail;
+  }
   const now = new Date().toISOString();
   const p = await prices();
   const extraItem = (sub.items?.data || []).find((i) => i.price?.id === p.extra.id);
