@@ -6,3 +6,5 @@ All keys come from Google Cloud Secret Manager. None are in this repo.
 Built so far: items 1-20 (signup & billing, plan limits & extra sites). See `test/README.md`.
 
 Deploy: paste `deploy/1-of-2-setup.sh`, then `deploy/2-of-2-deploy.sh`, into Cloud Shell.
+
+Can't get the sign-in email yet? Paste `deploy/owner-signin-link.sh` into Cloud Shell for a one-time owner sign-in link.

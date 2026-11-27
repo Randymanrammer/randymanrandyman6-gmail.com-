@@ -17,6 +17,8 @@ class MemoryStore {
     this._c(col).set(id, structuredClone({ ...cur, ...patch, id }));
   }
   async add(col, data) { const id = newId(col.slice(0, 3)); await this.set(col, id, data); return id; }
+  // Create only if the id is free. Returns true if this call created it.
+  async claim(col, id, data) { if (this._c(col).has(id)) return false; await this.set(col, id, data); return true; }
   async where(col, field, value) {
     return [...this._c(col).values()].filter((d) => d[field] === value).map((d) => structuredClone(d));
   }
@@ -36,6 +38,10 @@ class FirestoreStore {
   async set(col, id, data) { await this.db.collection(col).doc(id).set({ ...data, id }); return id; }
   async update(col, id, patch) { await this.db.collection(col).doc(id).update(patch); }
   async add(col, data) { const id = newId(col.slice(0, 3)); await this.set(col, id, data); return id; }
+  // Create only if the id is free (atomic in Firestore). Returns true if this call created it.
+  async claim(col, id, data) {
+    try { await this.db.collection(col).doc(id).create({ ...data, id }); return true; } catch (e) { if (e.code === 6) return false; throw e; }
+  }
   async where(col, field, value) {
     const q = await this.db.collection(col).where(field, '==', value).get();
     return q.docs.map((d) => ({ ...d.data(), id: d.id }));

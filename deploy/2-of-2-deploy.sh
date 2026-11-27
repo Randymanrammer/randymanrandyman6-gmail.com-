@@ -3,7 +3,9 @@ set -e
 P=$(gcloud config get-value project 2>/dev/null); R=us-central1; S=instant-online-success; SA=ios-app@$P.iam.gserviceaccount.com
 gcloud iam service-accounts describe $SA >/dev/null 2>&1 || gcloud iam service-accounts create ios-app --display-name="Instant Online Success app"
 for ROLE in roles/secretmanager.secretAccessor roles/datastore.user; do gcloud projects add-iam-policy-binding $P --member=serviceAccount:$SA --role=$ROLE --condition=None >/dev/null; done
-if [ -d ~/ios-app ]; then git -C ~/ios-app pull; else git clone -b ccr-c2860558-hloo52 https://github.com/Randymanrammer/randymanrandyman6-gmail.com-.git ~/ios-app; fi
+B=claude/site-review-gr7eri
+if [ ! -d ~/ios-app ]; then git clone https://github.com/Randymanrammer/randymanrandyman6-gmail.com-.git ~/ios-app; fi
+git -C ~/ios-app fetch origin $B && git -C ~/ios-app checkout -B $B FETCH_HEAD
 cd ~/ios-app
 SEC=""; for N in STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY STRIPE_WEBHOOK_SECRET GEMINI_API_KEY RESEND_API_KEY GITHUB_TOKEN CRON_SECRET TOKEN_ENCRYPTION_KEY BUSINESS_MAILING_ADDRESS; do SEC="$SEC,$N=$N:latest"; done
 gcloud run deploy $S --source . --region $R --service-account $SA --allow-unauthenticated --set-secrets "${SEC#,}" --set-env-vars STORE=firestore,DOMAIN=success-domain.com --quiet

@@ -46,6 +46,8 @@ async function createSite(member, body, actor) {
     return { needsConfirm: true, message: `$25/month for this site. ${startsNote}`, slug };
   }
   const now = new Date().toISOString();
+  // Reserve the address atomically so two people can't grab the same one at once.
+  if (!(await store.claim('slugs', slug, { memberId: member.id, at: now }))) throw Object.assign(new Error(`"${slug}" is taken. Try another site name.`), { status: 409 });
   const id = await store.add('sites', {
     memberId: member.id, slug, details, published: false, archived: false, ownerPaused: false,
     createdAt: now, updatedAt: now, extraAtCreation: willBeExtra,
