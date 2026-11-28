@@ -1,5 +1,5 @@
 # INSTANT ONLINE SUCCESS - owner lock for every bot panel (paste once into Cloud Shell)
-# Redeploys: 1) website builder owner console  2) Cotexcontent bot.
+# Redeploys: 1) website builder (owner lock + signed bot-status link)  2) Cotexcontent bot.
 # Deletes nothing. Touches no payments. Run it while signed in to Cloud Shell as the owner.
 set -e
 P=$(gcloud config get-value project 2>/dev/null); R=us-central1
@@ -15,7 +15,13 @@ if gcloud run services describe $S --region $R >/dev/null 2>&1; then
     echo "so the new lock would keep you out too. Nothing changed there."
   else
     rm -rf ~/ios-lock && git clone -q -b ccr-4055601e-b8yt00 https://github.com/Randymanrammer/randymanrandyman6-gmail.com-.git ~/ios-lock
-    bash ~/ios-lock/deploy/2-of-3-deploy.sh
+    # Signing key for the Master Bot Console link: made once, only in Secret Manager.
+    gcloud secrets describe BOT_SHARED_KEY >/dev/null 2>&1 || openssl rand -hex 32 | tr -d '\n' | gcloud secrets create BOT_SHARED_KEY --data-file=- --quiet >/dev/null
+    # Code + new key + alert address only. Keeps every other setting. No Stripe changes.
+    (cd ~/ios-lock && gcloud run deploy $S --source . --region $R --quiet \
+      --update-secrets BOT_SHARED_KEY=BOT_SHARED_KEY:latest \
+      --update-env-vars OWNER_EMAIL=$(gcloud config get-value account 2>/dev/null | tr 'A-Z' 'a-z'))
+    echo "Website builder: owner lock + bot status link are live at $(gcloud run services describe $S --region $R --format='value(status.url)')/link/v1/bots"
   fi
 else
   echo "SKIPPED website builder: service '$S' not found in $P/$R."

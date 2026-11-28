@@ -261,6 +261,7 @@ app.get('/:key.txt', wrap(async (req, res, next) => {
 }));
 
 require('./routes/builder').mount(app, { needMember });
+require('./link').mount(app, { wrap });
 for (const r of ['member', 'owner', 'bots', 'legal']) { try { require('./routes/' + r).mount(app, { needMember, wrap }); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND' || !String(e.message).includes('routes/' + r)) throw e; } }
 
 app.use((req, res) => res.status(404).send(page('Not found', '<h1>Page not found</h1><p><a href="/">Home</a></p>', { user: req.user })));

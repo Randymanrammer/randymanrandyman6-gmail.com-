@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "test:item20": "node test/item20-stripe-test.js",
-    "test:items21-100": "node test/items21-100-test.js"
+    "test:items21-100": "node test/items21-100-test.js",
+    "test:link": "node test/link-test.js"
   },
   "repository": {
     "type": "git",
