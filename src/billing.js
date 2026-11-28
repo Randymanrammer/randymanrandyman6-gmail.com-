@@ -54,7 +54,7 @@ const money = (cents) => '$' + (cents / 100).toFixed(2);
 const fmtDate = (unix) => (unix ? new Date(unix * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '');
 
 // ---------- Checkout ----------
-async function createCheckout({ email, member }) {
+async function createCheckout({ email, member, ref }) {
   const s = stripe();
   const p = await prices();
   const rejoin = !!member;
@@ -77,6 +77,7 @@ async function createCheckout({ email, member }) {
   } else {
     params.line_items.push({ price: p.signup.id, quantity: 1 });
     params.subscription_data.trial_period_days = config.plan.trialDays;
+    if (ref && require('./referrals').validCode(ref)) params.subscription_data.metadata.ref = String(ref).toLowerCase();
     params.custom_text = { submit: { message: config.disclosure } };
     if (email) params.customer_email = email;
   }
@@ -129,6 +130,7 @@ async function syncSubscription(sub, actor = 'stripe') {
     extraSitesBilled: extraItem ? extraItem.quantity : 0,
     updatedAt: now,
   };
+  if (sub.metadata?.ref && !m?.referredBy) patch.referredBy = sub.metadata.ref;
   if (sub.status === 'past_due') patch.pastDueSince = m?.pastDueSince || now;
   else patch.pastDueSince = null;
   let changed;
@@ -136,6 +138,7 @@ async function syncSubscription(sub, actor = 'stripe') {
     const id = await store.add('members', { ...patch, createdAt: now, settings: {} });
     m = await store.get('members', id);
     changed = 'member.joined';
+    await welcome(m);
   } else {
     if (m.subscriptionId && m.subscriptionId !== sub.id && m.status === 'active' && patch.status === 'ended') {
       return m; // an old subscription ending must not override a newer live one
@@ -147,6 +150,20 @@ async function syncSubscription(sub, actor = 'stripe') {
   }
   if (changed) await oracle(actor, changed, { member: m.id, email: m.email, status: m.status, subscriptionStatus: sub.status, cancelAtPeriodEnd: m.cancelAtPeriodEnd, extraSitesBilled: m.extraSitesBilled });
   return m;
+}
+
+// Item 67: welcome email after the $4.99 signup, with a getting-started guide.
+async function welcome(m) {
+  await sendEmail({
+    to: m.email, kind: 'welcome', subject: `Welcome to ${config.brand}!`,
+    html: `<h2>Welcome! Your membership is active.</h2><p>Here's how to get your first site live:</p><ol>
+<li><b>Sign in</b>: <a href="${config.baseUrl}/login">${config.baseUrl}/login</a></li>
+<li><b>Add your business info</b> on the dashboard (only real details - we never make things up).</li>
+<li><b>Pick a template</b>, then tap any text in the preview to change it.</li>
+<li><b>Publish</b> with one tap.</li><li><b>Add your domain</b> (optional).</li></ol>
+<p>Short how-to guides: <a href="${config.baseUrl}/help">${config.baseUrl}/help</a></p>
+<p>Your first $100.00 bill is ${m.trialEnd ? 'on ' + fmtDate(m.trialEnd) : '30 days after signup'}. We'll remind you 7 days before. Cancel anytime from the dashboard.</p>`,
+  });
 }
 
 // Can this member's sites be online right now?
@@ -196,6 +213,7 @@ async function handleEvent(event) {
         hostedInvoiceUrl: o.hosted_invoice_url || '',
       });
       await oracle('stripe', 'payment.received', { invoice: o.id, amountCents: o.amount_paid, customer: o.customer });
+      await require('./referrals').onPaid(o, await memberByCustomer(o.customer));
       if (o.amount_paid > 0 && o.customer_email) {
         const lines = (o.lines?.data || []).map((l) => `<li>${esc(l.description)} - ${money(l.amount)}</li>`).join('');
         await sendEmail({
@@ -350,5 +368,5 @@ async function executeApprovedRefund(approval, ownerEmail) {
 module.exports = {
   stripe, connected, isTestMode, prices, money, fmtDate, createCheckout, syncSubscription, hostingAllowed,
   constructEvent, handleEvent, activeSites, extraSitesNeeded, setExtraSites, cancel, resume,
-  billingSummary, portalUrl, requestRefund, executeApprovedRefund, memberByEmail, LOOKUP,
+  billingSummary, portalUrl, requestRefund, executeApprovedRefund, memberByEmail, memberByCustomer, welcome, LOOKUP,
 };

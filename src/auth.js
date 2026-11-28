@@ -43,8 +43,10 @@ function parseCookies(req) {
 }
 
 const SESSION_DAYS = 30;
-function startSession(res, email) {
-  const token = sign({ email: email.toLowerCase(), exp: Date.now() + SESSION_DAYS * 864e5 }, 'session');
+// method: 'google' (verified Google sign-in), 'link' (emailed link) or 'checkout'.
+// Owner rights need BOTH the owner email AND a verified Google sign-in.
+function startSession(res, email, method = 'link') {
+  const token = sign({ email: email.toLowerCase(), m: method, exp: Date.now() + SESSION_DAYS * 864e5 }, 'session');
   const secure = config.baseUrl.startsWith('https') ? '; Secure' : '';
   res.setHeader('Set-Cookie', `ios_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}${secure}`);
 }
@@ -56,11 +58,21 @@ async function loadUser(req, _res, next) {
   req.user = null;
   const p = verify(parseCookies(req).ios_session, 'session');
   if (p && p.email) {
-    req.user = { email: p.email, isOwner: p.email === config.ownerEmail };
+    req.user = { email: p.email, isOwner: isOwnerSession(p) };
     const m = await store.where('members', 'email', p.email);
     req.member = m[0] || null;
+    req.user.skin = req.member?.settings?.skin || 'classic';
   }
   next();
+}
+
+function isOwnerEmail(email) {
+  const h = crypto.createHash('sha256').update(String(email || '').trim().toLowerCase()).digest('hex');
+  const want = Buffer.from(config.ownerEmailSha256, 'hex'), got = Buffer.from(h, 'hex');
+  return want.length === got.length && crypto.timingSafeEqual(want, got);
+}
+function isOwnerSession(p) {
+  return !!p && p.m === 'google' && isOwnerEmail(p.email);
 }
 
 function requireLogin(req, res, next) {
@@ -68,7 +80,11 @@ function requireLogin(req, res, next) {
   next();
 }
 function requireOwner(req, res, next) {
-  if (!req.user || !req.user.isOwner) return res.status(404).send('Not found');
+  if (!req.user || !req.user.isOwner) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(404).send('Not found');
+  }
+  res.setHeader('Cache-Control', 'no-store');
   next();
 }
 
@@ -89,4 +105,4 @@ function loginLinkToken(email) {
   return sign({ email: email.toLowerCase(), exp: Date.now() + 20 * 60 * 1000, n: crypto.randomBytes(6).toString('hex') }, 'login');
 }
 
-module.exports = { sign, verify, startSession, endSession, loadUser, requireLogin, requireOwner, sameOrigin, loginLinkToken };
+module.exports = { isOwnerEmail, isOwnerSession, sign, verify, startSession, endSession, loadUser, requireLogin, requireOwner, sameOrigin, loginLinkToken };

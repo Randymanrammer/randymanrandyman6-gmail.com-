@@ -1,4 +1,4 @@
-# INSTANT ONLINE SUCCESS - Cloud Shell script 1 of 2 (setup + secrets)
+# INSTANT ONLINE SUCCESS - Cloud Shell script 1 of 3 (setup + secrets)
 set -e
 P=$(gcloud config get-value project 2>/dev/null)
 if [ -z "$P" ]; then read -rp "Google Cloud project ID: " P; gcloud config set project "$P"; fi
@@ -15,4 +15,4 @@ for N in STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY RESEND_API_KEY GEMINI_API_KEY 
 done
 V=""
 gcloud secrets describe STRIPE_WEBHOOK_SECRET >/dev/null 2>&1 || put STRIPE_WEBHOOK_SECRET not-set
-echo "DONE 1 of 2. Now paste script 2 of 2."
+echo "DONE 1 of 2. Now paste script 2 of 3."

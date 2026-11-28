@@ -26,21 +26,33 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px 6px;b
 .scroll{overflow-x:auto}
 `;
 
+function skinCss(skin) {
+  const k = require('./templates').SKINS[skin];
+  if (!k || skin === 'classic') return '';
+  const fg = k.acc, dark = require('./render').contrast(k.bg, '#000000') < 7;
+  return `:root,:root:not(#x){--bg:${k.bg};--fg:${k.fg};--card:${k.card};--line:${k.line};--acc:${k.acc};--accfg:${require('./render').contrast(fg, '#ffffff') >= 4.5 ? '#ffffff' : '#000000'};--mut:${dark ? '#b9bfcb' : '#4a5160'}}`;
+}
+
 function page(title, body, { user, flash } = {}) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} - ${esc(config.brand)}</title><style>${CSS}</style></head><body>
-<nav><a class="brand" href="/">${esc(config.brand)}</a>${user ? `<a href="/dashboard">Dashboard</a><a href="/billing">Billing</a>${user.isOwner ? '<a href="/owner">Owner</a>' : ''}<form method="post" action="/logout" style="margin:0"><button class="sec" style="padding:6px 12px;min-height:0">Sign out</button></form>` : '<a href="/login">Sign in</a>'}</nav>
-<main class="wrap">${flash ? `<p class="flash" role="status">${esc(flash)}</p>` : ''}${body}</main></body></html>`;
+<title>${esc(title)} - ${esc(config.brand)}</title><style>${CSS}${skinCss(user?.skin)}
+footer.site{border-top:1px solid var(--line);margin-top:30px;padding:16px;font-size:14px;color:var(--mut);text-align:center}footer.site a{margin:0 6px}
+.skip{position:absolute;left:-999px}.skip:focus{left:8px;top:8px;background:var(--card);padding:8px}:focus-visible{outline:3px solid var(--acc);outline-offset:2px}</style></head><body>
+<a class="skip" href="#main">Skip to content</a>
+<nav aria-label="Main"><a class="brand" href="/">${esc(config.brand)}</a>${user ? `<a href="/dashboard">Dashboard</a><a href="/leads">Leads</a><a href="/billing">Billing</a><a href="/help">Help</a>${user.isOwner ? '<a href="/owner">Owner</a>' : ''}<form method="post" action="/logout" style="margin:0"><button class="sec" style="padding:6px 12px;min-height:0">Sign out</button></form>` : '<a href="/templates">Templates</a><a href="/help">Help</a><a href="/login">Sign in</a>'}</nav>
+<main class="wrap" id="main">${flash ? `<p class="flash" role="status">${esc(flash)}</p>` : ''}${body}</main>
+<footer class="site"><a href="/legal/privacy">Privacy</a><a href="/legal/terms">Terms</a><a href="/legal/refunds">Refund &amp; cancel policy</a><a href="/status">Status</a><br>&copy; ${new Date().getUTCFullYear()} ${esc(config.businessName)} · We use one essential sign-in cookie and no tracking cookies.</footer></body></html>`;
 }
 
 function featureList() {
-  const live = features.filter((f) => f.tested);
-  const soon = features.filter((f) => !f.tested);
+  const live = features.filter((f) => features.state(f) === 'live');
+  const nc = features.filter((f) => features.state(f) === 'not_connected');
+  const soon = features.filter((f) => features.state(f) === 'soon');
   return `${live.length ? `<h3>Included</h3><ul>${live.map((f) => `<li>${esc(f.label)}</li>`).join('')}</ul>` : ''}
-${soon.length ? `<h3>Coming soon</h3><ul class="mut">${soon.map((f) => `<li>${esc(f.label)} - Coming soon</li>`).join('')}</ul>` : ''}`;
+${nc.length || soon.length ? `<h3>Coming soon</h3><ul class="mut">${nc.map((f) => `<li>${esc(f.label)} - Coming soon (being connected)</li>`).join('')}${soon.map((f) => `<li>${esc(f.label)} - Coming soon</li>`).join('')}</ul>` : ''}`;
 }
 
-function home({ stripeConnected, user }) {
+function home({ stripeConnected, user, ref }) {
   return page('Websites for your business', `
 <h1>Your business online, built and hosted for you.</h1>
 <p class="mut">${esc(config.businessName)}</p>
@@ -50,8 +62,8 @@ function home({ stripeConnected, user }) {
   ${stripeConnected ? `
   <form method="post" action="/checkout" id="go">
     <label for="email">Email (optional, Stripe will ask if blank)</label>
-    <input id="email" name="email" type="email" autocomplete="email">
-    <label class="check"><input type="checkbox" name="agree" value="yes" id="agree"> <span>I agree: ${esc(config.disclosure)}</span></label>
+    <input id="email" name="email" type="email" autocomplete="email">${ref ? `<input type="hidden" name="ref" value="${esc(ref)}"><p class="mut small">A member referred you.</p>` : ''}
+    <label class="check"><input type="checkbox" name="agree" value="yes" id="agree"> <span>I agree: ${esc(config.disclosure)} See the <a href="/legal/terms">Terms</a>, <a href="/legal/refunds">Refund &amp; cancel policy</a> and <a href="/legal/privacy">Privacy policy</a>.</span></label>
     <p><button id="start" type="submit" disabled>Get Started</button></p>
   </form>
   <script>document.getElementById('agree').addEventListener('change',e=>{document.getElementById('start').disabled=!e.target.checked})</script>`
