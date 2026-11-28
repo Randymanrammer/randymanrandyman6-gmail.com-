@@ -128,7 +128,10 @@ const jwt = (payload, key = privateKey, kid = KID) => {
   port = server.address().port;
   base = `http://127.0.0.1:${port}`;
   config.baseUrl = base;
-  const cookieFor = (email) => 'ios_session=' + encodeURIComponent(auth.sign({ email, exp: Date.now() + 864e5 }, 'session'));
+  // Test owner stands in for the real one (real owner is pinned by hash in config.js).
+  config.ownerEmail = 'owner@example.test';
+  config.ownerEmailSha256 = crypto.createHash('sha256').update(config.ownerEmail).digest('hex');
+  const cookieFor = (email, m = 'google') => 'ios_session=' + encodeURIComponent(auth.sign({ email, m, exp: Date.now() + 864e5 }, 'session'));
   const now = new Date().toISOString();
   const mkMember = async (email, extra = {}) => store.get('members', await store.add('members', { email, status: 'active', subscriptionStatus: 'trialing', trialEnd: Math.floor(Date.now() / 1000) + 20 * 86400, createdAt: now, settings: {}, ...extra }));
   const A = await mkMember('alice@example.com');
@@ -614,6 +617,25 @@ const jwt = (payload, key = privateKey, kid = KID) => {
   r = await request('GET', '/owner', { cookie: ca });
   const ro = await request('GET', '/owner', { cookie: co });
   check(91, 'Admin Command Center locked to owner', r.status === 404 && ro.status === 200 && ro.text.includes('Admin Command Center'));
+  // Owner lock-down: owner email via emailed link, or no "m" (old cookie), or a different Google account = blocked.
+  const coLink = cookieFor(config.ownerEmail, 'link');
+  const coOld = 'ios_session=' + encodeURIComponent(auth.sign({ email: config.ownerEmail, exp: Date.now() + 864e5 }, 'session'));
+  const ownerBlocked = [];
+  for (const [ck, path, method] of [[coLink, '/owner', 'GET'], [coOld, '/owner', 'GET'], [cb, '/owner/oracle', 'GET'], ['', '/owner', 'GET'], [coLink, '/owner/bots/uptime', 'POST']]) {
+    const x = await request(method, path, { cookie: ck, form: method === 'POST' ? {} : undefined });
+    ownerBlocked.push(x.status);
+  }
+  const keepOwner = config.ownerEmail; config.ownerEmail = B.email; // alert address changed: must NOT grant access
+  const swap = await request('GET', '/owner', { cookie: cb }); config.ownerEmail = keepOwner;
+  await request('POST', '/login', { form: { email: config.ownerEmail } });
+  const ownerLinkMails = got.resend.filter((e) => e.to[0] === config.ownerEmail && e.subject === 'Your sign-in link').length;
+  const ownTok = jwt({ aud: 'ios-test', iss: 'https://securetoken.google.com/ios-test', sub: 'uid-owner', email: config.ownerEmail, email_verified: true, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 });
+  const gl = await request('POST', '/login/firebase', { json: { idToken: ownTok } });
+  const gCookie = (gl.headers['set-cookie'] || [''])[0].split(';')[0];
+  const gIn = await request('GET', '/owner', { cookie: gCookie });
+  check(91, 'Owner-only: only the pinned owner account signed in with Google gets in; email link, old cookie, other accounts, no login, changed OWNER_EMAIL setting all blocked (server-side)',
+    ownerBlocked.every((s) => s === 404) && swap.status === 404 && ownerLinkMails === 0 && gl.status === 200 && JSON.parse(gl.text).next === '/owner' && gIn.status === 200 && gIn.headers['cache-control'] === 'no-store',
+    JSON.stringify({ ownerBlocked, swap: swap.status, ownerLinkMails, gl: gl.status, gIn: gIn.status }));
   check(93, 'Approval queue lists refunds/payouts/deletes; nothing moves without a tap', ro.text.includes('Referral payout') && (await store.get('approvals', pay)).status === 'pending');
   r = await request('GET', '/owner?q=bob', { cookie: co });
   const prof = await request('GET', `/owner/members/${B.id}`, { cookie: co });

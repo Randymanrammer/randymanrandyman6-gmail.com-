@@ -70,7 +70,7 @@ app.get('/welcome', wrap(async (req, res) => {
   const cs = await billing.stripe().checkout.sessions.retrieve(id); // verified server-side with Stripe
   if (cs.status !== 'complete' || !cs.subscription) return res.send(page('Not finished', '<p>Checkout is not complete yet.</p><p><a href="/">Back</a></p>'));
   const m = await billing.syncSubscription(await billing.stripe().subscriptions.retrieve(cs.subscription), 'stripe:checkout-return');
-  auth.startSession(res, m.email);
+  auth.startSession(res, m.email, 'checkout');
   res.redirect(303, '/dashboard?welcome=1');
 }));
 
@@ -85,7 +85,7 @@ ${require('./firebase').configured() ? `<hr><button class="sec" id="gbtn" type="
 app.post('/login', require('./security').rateLimit('login', 5, 10 * 60e3), wrap(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const m = await billing.memberByEmail(email);
-  if ((m || email === config.ownerEmail) && config.has('TOKEN_ENCRYPTION_KEY')) {
+  if (m && config.has('TOKEN_ENCRYPTION_KEY')) { // owner signs in with Google only
     const link = `${config.baseUrl}/login/verify?token=${encodeURIComponent(auth.loginLinkToken(email))}`;
     await sendEmail({ to: email, kind: 'login', subject: 'Your sign-in link', html: `<p><a href="${esc(link)}">Tap here to sign in</a>. This link works for 20 minutes.</p><p>If you didn't ask for this, ignore this email.</p>` });
   }
@@ -96,8 +96,8 @@ app.post('/login', require('./security').rateLimit('login', 5, 10 * 60e3), wrap(
 app.get('/login/verify', (req, res) => {
   const p = auth.verify(String(req.query.token || ''), 'login');
   if (!p) return res.status(400).send(page('Link expired', '<p>That link expired. <a href="/login">Get a new one</a>.</p>'));
-  auth.startSession(res, p.email);
-  res.redirect(303, p.email === config.ownerEmail ? '/owner' : '/dashboard');
+  auth.startSession(res, p.email, 'link');
+  res.redirect(303, '/dashboard');
 });
 app.post('/logout', (req, res) => { auth.endSession(res); res.redirect(303, '/'); });
 

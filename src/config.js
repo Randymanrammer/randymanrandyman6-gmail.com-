@@ -16,7 +16,11 @@ function val(name) {
 const config = {
   businessName: 'Instant Online Success LLC',
   brand: 'Instant Online Success',
-  ownerEmail: (process.env.OWNER_EMAIL || 'randymanrandyman6@gmail.com').toLowerCase(),
+  // Owner console lock. Only the Google account whose address hashes to this value is the owner.
+  // Fixed in code on purpose: changing a setting can't hand the console to someone else.
+  ownerEmailSha256: 'bd204da868f925fdc724ad76b0ba3cee681f17e3a7895dad9b2ead78d75d4b54',
+  // Where owner alerts are sent. Set by the deploy script from the Cloud Shell login.
+  ownerEmail: (process.env.OWNER_EMAIL || '').trim().toLowerCase(),
   domain: process.env.DOMAIN || 'success-domain.com',
   baseUrl: (process.env.BASE_URL || 'http://localhost:8080').replace(/\/$/, ''),
   emailFrom: process.env.EMAIL_FROM || 'Instant Online Success <hello@success-domain.com>',

@@ -85,11 +85,11 @@ const f=await fetch('/login/firebase',{method:'POST',headers:{'content-type':'ap
     let who;
     try { who = await firebase.verifyIdToken(req.body?.idToken); } catch { return res.status(401).json({ error: 'Google sign-in failed.' }); }
     const m = await billing.memberByEmail(who.email);
-    if (!m && who.email !== config.ownerEmail) return res.status(404).json({ error: 'No membership for that Google account. Get started on the home page.' });
+    if (!m && !auth.isOwnerEmail(who.email)) return res.status(404).json({ error: 'No membership for that Google account. Get started on the home page.' });
     if (m && !m.googleUid) await store.update('members', m.id, { googleUid: who.uid });
-    auth.startSession(res, who.email);
+    auth.startSession(res, who.email, 'google');
     await oracle(who.email, 'login.google', {});
-    res.json({ ok: true, next: who.email === config.ownerEmail ? '/owner' : '/dashboard' });
+    res.json({ ok: true, next: auth.isOwnerEmail(who.email) ? '/owner' : '/dashboard' });
   }));
 
   // ---------- 32 skins ----------

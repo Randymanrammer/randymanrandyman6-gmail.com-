@@ -1,13 +1,14 @@
 # INSTANT ONLINE SUCCESS - Cloud Shell script 2 of 3 (deploy + webhook + bots)
 set -e
-P=$(gcloud config get-value project 2>/dev/null); R=us-central1; S=instant-online-success; SA=ios-app@$P.iam.gserviceaccount.com; B=ccr-ec0307f1-4oxyza
+P=$(gcloud config get-value project 2>/dev/null); R=us-central1; S=instant-online-success; SA=ios-app@$P.iam.gserviceaccount.com; B=ccr-4055601e-b8yt00
+OWNER=$(gcloud config get-value account 2>/dev/null | tr 'A-Z' 'a-z')  # owner alerts go to the Google account running this script
 gcloud iam service-accounts describe $SA >/dev/null 2>&1 || gcloud iam service-accounts create ios-app --display-name="Instant Online Success app"
 for ROLE in roles/secretmanager.secretAccessor roles/datastore.user roles/certificatemanager.editor; do gcloud projects add-iam-policy-binding $P --member=serviceAccount:$SA --role=$ROLE --condition=None >/dev/null; done
 if [ -d ~/ios-app/.git ]; then git -C ~/ios-app fetch -q origin $B && git -C ~/ios-app checkout -q -B $B FETCH_HEAD; else git clone -q -b $B https://github.com/Randymanrammer/randymanrandyman6-gmail.com-.git ~/ios-app; fi
 cd ~/ios-app
 SEC=""; for N in STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY STRIPE_WEBHOOK_SECRET GEMINI_API_KEY RESEND_API_KEY GITHUB_TOKEN CRON_SECRET TOKEN_ENCRYPTION_KEY BUSINESS_MAILING_ADDRESS; do SEC="$SEC,$N=$N:latest"; done
 gcloud run deploy $S --source . --region $R --service-account $SA --allow-unauthenticated --set-secrets "${SEC#,}" \
-  --update-env-vars STORE=firestore,DOMAIN=success-domain.com,GOOGLE_CLOUD_PROJECT=$P,BUILD_RECORDS_REPO=Randymanrammer/ios-build-records --quiet
+  --update-env-vars STORE=firestore,DOMAIN=success-domain.com,GOOGLE_CLOUD_PROJECT=$P,OWNER_EMAIL=$OWNER,BUILD_RECORDS_REPO=Randymanrammer/ios-build-records --quiet
 URL=$(gcloud run services describe $S --region $R --format='value(status.url)')
 CUR=$(gcloud run services describe $S --region $R --format=json | python3 -c 'import sys,json;e=json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0].get("env",[]);print(next((x.get("value","") for x in e if x["name"]=="BASE_URL"),""))')
 [[ $CUR == https://success-domain.com ]] || gcloud run services update $S --region $R --update-env-vars BASE_URL=$URL --quiet
